@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: mypy src/imagira_node_sdk
+      - run: pytest -q
+
+  # The test that actually proves the split worked: build the wheel, install it
+  # into an environment that has NOTHING but numpy, and use it. If any coupling
+  # to the main app ever creeps back in, this job is where it shows up — the
+  # editable install above would happily import from the working tree instead.
+  wheel-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build && python -m build
+      - name: Install the wheel in a clean venv and write a node against it
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install dist/*.whl
+          /tmp/clean/bin/pip list
+          /tmp/clean/bin/python - <<'PY'
+          import numpy as np
+          from imagira_node_sdk import BaseNode, register, to_rgb, __version__
+          from imagira_node_sdk.testing import assert_node_contract, run_node, make_image
+
+          @register
+          class SmokeNode(BaseNode):
+              type = "ci_smoke_invert"
+              label = "Smoke"
+              param_schema = [{"key": "on", "label": "On", "type": "bool", "default": True}]
+
+              def execute(self, image, mask=None, data=None, context=None):
+                  return {"image": 255 - to_rgb(image), "mask": mask}
+
+          assert_node_contract(SmokeNode)
+          out = run_node(SmokeNode, image=make_image(2, 2, (10, 20, 30)))
+          assert out["image"][0, 0].tolist() == [245, 235, 225]
+          print("ok", __version__)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

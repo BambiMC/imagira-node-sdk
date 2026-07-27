@@ -1,0 +1,10 @@
+# The sdist ships tests/, and tests/test_example_node.py imports from examples/
+# — so examples/ has to travel with it or `pytest` on an unpacked sdist fails.
+# docs/ goes along too, since the README links to it.
+#
+# Deliberately NOT included: any repo-local working material (see the second
+# half of .gitignore). setuptools excludes it by default, and this comment
+# exists so nobody adds a blanket `graft .` here later.
+recursive-include examples *.py
+recursive-include docs *.md
+include CHANGELOG.md CONTRIBUTING.md

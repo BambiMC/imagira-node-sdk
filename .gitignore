@@ -11,3 +11,9 @@ venv/
 .coverage
 htmlcov/
 .DS_Store
+
+From_main_repo/
+node-sdk-context/
+
+TODO.md
+DONE.md

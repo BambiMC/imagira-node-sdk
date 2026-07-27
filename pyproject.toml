@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imagira-node-sdk"
+version = "1.1.0"
+description = "The plugin contract for building Imagira pipeline nodes (BaseNode, param schema, imagira.nodes entry point)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Fabian Berger" }]
+keywords = ["imagira", "image-processing", "pipeline", "nodes", "plugin", "sdk"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
+    "Typing :: Typed",
+]
+
+# numpy is the ONLY runtime dependency, deliberately. The whole point of the
+# split is that a node package does not drag in Flask/opencv/scipy. The floor
+# is lower than the main app's numpy>=2.0 so installing a node package can't
+# force an unrelated environment onto numpy 2 — nothing here uses a 2.x-only
+# API.
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "build>=1.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/BambiMC/Imagira-Node-SDK"
+Documentation = "https://github.com/BambiMC/Imagira-Node-SDK/tree/main/docs"
+Changelog = "https://github.com/BambiMC/Imagira-Node-SDK/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+imagira_node_sdk = ["py.typed"]
+
+# ── Lint / type config kept identical to the main Imagira app, so a node that
+#    lints clean here lints clean in-tree too. ────────────────────────────────
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = [
+    "E701",  # multiple-statements-on-one-line-colon   — project style throughout
+    "E702",  # multiple-statements-on-one-line-semicolon — project style throughout
+    "E741",  # ambiguous-variable-name (l, I, O) — common in numpy/image code
+    "E402",  # module-import-not-at-top — intentional in test setup files
+    "F841",  # local-variable-is-assigned-to-but-never-used — sometimes intentional
+]
+
+[tool.mypy]
+ignore_missing_imports = true
+disable_error_code = ["var-annotated"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
