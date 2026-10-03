@@ -155,8 +155,9 @@ def execute(self, image=None, mask=None, samples=None, data=None, context=None):
     ...
 ```
 
-Set `accepts_samples = True` without adding the parameter and the host raises
-`TypeError` on the node's first run. `assert_node_contract()` catches that.
+Set `accepts_samples = True` without adding the parameter and the class warns at
+creation (raises under `IMAGIRA_STRICT_CONTRACT=1`); the engine then never passes
+`samples`. `assert_node_contract()` reports it as a failure.
 
 **`context` needs `accepts_context = True`, which is not a `BaseNode`
 attribute.** It's read off the class with `getattr(node, "accepts_context",
@@ -241,8 +242,10 @@ implement only `apply()` (or the kind's hook). `accepts_data` is derived from
 `param_schema` plus whether `execute` takes `data`, unless you set it.
 
 **Import-time checks.** A `True` `accepts_samples`/`accepts_data`/`accepts_context`
-flag requires a matching `execute()` parameter (or `**kwargs`), otherwise
-`TypeError`. A `show_if` must reference a param declared *earlier*.
+flag requires a matching `execute()` parameter (or `**kwargs`), and a `show_if` must
+reference a param declared *earlier*. Both warn at class creation (the host logs
+them once) and raise `TypeError` only in strict mode (`IMAGIRA_STRICT_CONTRACT=1`,
+which you should set in your plugin's tests).
 
 ## Testing
 

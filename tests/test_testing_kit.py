@@ -255,8 +255,9 @@ class TestAssertNodeContract:
     def test_accepts_flag_without_the_matching_parameter_is_reported(self):
         # The host calls execute(image, mask, samples=...) only for nodes that
         # set accepts_samples — so this combination is a TypeError on first run.
-        # Since 1.2.0 this is rejected at class creation, before the kit runs.
-        with pytest.raises(TypeError, match="no `samples` parameter"):
+        # Since 1.2.0 class creation also warns (it raises only in strict mode).
+        with pytest.warns(UserWarning, match="no `samples` parameter"), \
+                pytest.raises(AssertionError, match="no 'samples' parameter"):
             assert_node_contract(type("NoSamplesArg", (BaseNode,), {
                 "type": "author_nosamples", "label": "X", "accepts_samples": True,
                 "execute": lambda self, image, mask=None, data=None, context=None: {}}))
@@ -266,7 +267,7 @@ class TestAssertNodeContract:
         ("accepts_context", "context"),
     ])
     def test_every_opt_in_kwarg_is_checked(self, flag, kwarg):
-        with pytest.raises(TypeError, match=f"no `{kwarg}` parameter"):
+        with pytest.warns(UserWarning, match=f"no `{kwarg}` parameter"),                 pytest.raises(AssertionError, match=f"no '{kwarg}' parameter"):
             assert_node_contract(type("Missing", (BaseNode,), {
                 "type": f"author_missing_{kwarg}", "label": "X", flag: True,
                 "execute": lambda self, image, mask=None: {}}))

@@ -28,14 +28,19 @@ in the app diffs all four. Nothing was added to `__all__`; use the submodules.
 - **Strict-mode state guard**: `_state_on_self` / `_EXECUTING`; a no-op without
   the app's `core.node_contract`.
 
-### 2.0 candidates (behaviour changes already in the vendored code)
+### Compatibility (why this is a minor release)
 
 - A `True` `accepts_samples` / `accepts_data` / `accepts_context` flag whose
-  `execute()` lacks that parameter (and `**kwargs`) now raises `TypeError` at
-  class creation (was a run-time error on first run).
-- A `show_if` gating key at or after the gated param now raises.
-- An unknown param `type` now raises at class creation (the `color` typo for
-  `colour`).
+  `execute()` lacks that parameter (and `**kwargs`), and a `show_if` that gates
+  on a param listed at or after the gated one, are reported at class creation.
+  They raise `TypeError` only under strict mode (`IMAGIRA_STRICT_CONTRACT=1`,
+  which the host sets for its tests and fuzzers); otherwise the host logs them
+  once and the SDK on its own emits a `UserWarning`. A 1.1 plugin still loads.
+  The engine already passes a kwarg only when the signature takes it, so the
+  flag mismatch is harmless at run time.
+- An unknown param `type` (the `color` typo for `colour`) raises at class
+  creation. The host has rejected such classes since before 1.2; the SDK's
+  copy was simply older, so no plugin that loads in the host is affected.
 - The `config.NODE_CATEGORIES` check only fires for classes in `core.nodes.*`,
   so it never applies to plugins.
 

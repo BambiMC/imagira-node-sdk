@@ -36,6 +36,28 @@ def _state_on_self(node, name):
         f"context")
 
 
+def _import_rule(cls, rule, message):
+    """An import-time rule added in SDK 1.2: raise in strict mode, warn otherwise.
+
+    Plugins written against 1.1 must still load (additive-only, SDK
+    CONTRIBUTING.md), so production logs once and tests/fuzzers raise.
+    """
+    try:
+        import config
+        strict = bool(getattr(config, "STRICT_CONTRACT", False))
+    except ImportError:   # vendored copy (node SDK) without the app config
+        strict = False
+    if strict:
+        raise TypeError(message)
+    try:
+        from core.node_contract import contract_violation
+    except ImportError:
+        import warnings
+        warnings.warn(message, stacklevel=3)
+        return
+    contract_violation(getattr(cls, "type", cls.__name__), rule, message)
+
+
 def _signature_accepts(fn, name: str) -> bool:
     """Does callable ``fn`` take a parameter called ``name`` (named or via ``**kwargs``)?
 
@@ -355,7 +377,8 @@ class BaseNode:
                             ("accepts_data", "data"),
                             ("accepts_context", "context")):
             if getattr(cls, _flag, False) and not _signature_accepts(cls.execute, _arg):
-                raise TypeError(
+                _import_rule(
+                    cls, "flag-without-param",
                     f"{cls.__name__}: {_flag} is True but execute() has no `{_arg}` "
                     f"parameter (and no **kwargs) -- the engine would pass `{_arg}=` "
                     f"and crash. Add `{_arg}=None` to execute() or drop the flag."
@@ -652,7 +675,8 @@ class BaseNode:
                         f"— the control would never be shown."
                     )
                 if param_pos[cond["key"]] >= param_pos.get(spec.get("key"), 0):
-                    raise TypeError(
+                    _import_rule(
+                        cls, "show-if-order",
                         f"{cls.__name__}: show_if on {spec.get('key')!r} gates on "
                         f"{cond['key']!r}, which comes later in param_schema -- the "
                         f"gating parameter must be listed before the one it shows or hides."
