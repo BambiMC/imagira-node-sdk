@@ -8,6 +8,37 @@ affecting what a node must do to keep working — are listed separately from
 internal changes, because those are the only ones that can cost a node author
 anything.
 
+## [1.2.0] — unreleased
+
+Catch-up port of the app's vendored modules (`analysis/54_quality.md` §5.13).
+`base_node.py` and `expression.py` are re-synced and two modules are new:
+`imagira_node_sdk.params` and `imagira_node_sdk.kinds`. `tests/test_sdk_parity.py`
+in the app diffs all four. Nothing was added to `__all__`; use the submodules.
+
+### Contract
+
+- **New modules.** `params` (descriptors `Param`, `Slider`, `Number`, `Bool`,
+  `Select`, `Colour`, `Text`, `Raw`, plus `from_schema`, `params_from_class`,
+  `ParamView`) and `kinds` (`Filter`, `Geometry`, `MaskMaker`, `MaskOp`,
+  `Sampler`, `Analyzer`, `DataOp`, `Merge`, `SampleConsumer`, `Source`, `Sink`,
+  `masked_pixels`). Both are additive; they declare ordinary `BaseNode`s/schemas.
+- **New `BaseNode` attributes:** derived `accepts_data`, `thread_safe_attrs`,
+  optional schema field `legacy_options`; `ExprParams(..., coerce=...)` with
+  clamp-on-read for `slider`/`number`.
+- **Strict-mode state guard**: `_state_on_self` / `_EXECUTING`; a no-op without
+  the app's `core.node_contract`.
+
+### 2.0 candidates (behaviour changes already in the vendored code)
+
+- A `True` `accepts_samples` / `accepts_data` / `accepts_context` flag whose
+  `execute()` lacks that parameter (and `**kwargs`) now raises `TypeError` at
+  class creation (was a run-time error on first run).
+- A `show_if` gating key at or after the gated param now raises.
+- An unknown param `type` now raises at class creation (the `color` typo for
+  `colour`).
+- The `config.NODE_CATEGORIES` check only fires for classes in `core.nodes.*`,
+  so it never applies to plugins.
+
 ## [1.1.0] — unreleased
 
 Two additions ported **from** the main app, in the opposite direction to 1.0.0's

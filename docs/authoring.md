@@ -215,6 +215,35 @@ read through `.get()`.
 **Don't mutate `param_schema` or `_DEFAULT_PARAMS`.** They're class-level.
 Defaults are cached from your schema once per subclass at definition time.
 
+### Param descriptors (`imagira_node_sdk.params`)
+
+Instead of dicts you can declare params as class attributes; the key defaults to
+the attribute name and `to_schema()` yields the same dict shape:
+
+```python
+from imagira_node_sdk.params import Slider, Select
+
+class MyNode(BaseNode):
+    amount = Slider(0.5, 0.0, 1.0, help="How much of the effect to apply.")
+    mode = Select("soft", ["soft", "hard"], help="Blend mode.")
+```
+
+Other additions: `legacy_options` (values a `select` still accepts from old
+saved workflows without offering them); out-of-range `slider`/`number` values
+are clamped on read; `thread_safe_attrs` lists attributes that may be set on
+`self` during `execute()` (instances are shared across the image thread pool).
+
+### Kinds (`imagira_node_sdk.kinds`)
+
+Kind base classes (`Filter`, `MaskOp`, `Sampler`, `Analyzer`, `DataOp`, `Merge`,
+`Source`, `Sink`, ...) fill in the port flags and `execute()` plumbing so you
+implement only `apply()` (or the kind's hook). `accepts_data` is derived from
+`param_schema` plus whether `execute` takes `data`, unless you set it.
+
+**Import-time checks.** A `True` `accepts_samples`/`accepts_data`/`accepts_context`
+flag requires a matching `execute()` parameter (or `**kwargs`), otherwise
+`TypeError`. A `show_if` must reference a param declared *earlier*.
+
 ## Testing
 
 `imagira_node_sdk.testing` exists so you can test a node with no Imagira

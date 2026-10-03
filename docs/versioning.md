@@ -45,6 +45,8 @@ Breaking any of these breaks every node in existence, in-tree or third-party:
   subclass.
 - **New optional keyword arguments with defaults.**
 - **New utility functions and new `param_schema` types.**
+- **New optional modules** (`params`, `kinds`, 1.2) and optional schema fields (`legacy_options`).
+- **New class attributes** such as `thread_safe_attrs` (1.2).
 - **New checks in `validate_param_schema` / `assert_node_contract`.** These are
   opt-in test-time tools, not import-time gates, so a new check can only ever
   fail a test — never break a running node. That's precisely why

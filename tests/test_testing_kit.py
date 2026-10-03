@@ -255,7 +255,8 @@ class TestAssertNodeContract:
     def test_accepts_flag_without_the_matching_parameter_is_reported(self):
         # The host calls execute(image, mask, samples=...) only for nodes that
         # set accepts_samples — so this combination is a TypeError on first run.
-        with pytest.raises(AssertionError, match="no 'samples' parameter"):
+        # Since 1.2.0 this is rejected at class creation, before the kit runs.
+        with pytest.raises(TypeError, match="no `samples` parameter"):
             assert_node_contract(type("NoSamplesArg", (BaseNode,), {
                 "type": "author_nosamples", "label": "X", "accepts_samples": True,
                 "execute": lambda self, image, mask=None, data=None, context=None: {}}))
@@ -265,7 +266,7 @@ class TestAssertNodeContract:
         ("accepts_context", "context"),
     ])
     def test_every_opt_in_kwarg_is_checked(self, flag, kwarg):
-        with pytest.raises(AssertionError, match=f"no '{kwarg}' parameter"):
+        with pytest.raises(TypeError, match=f"no `{kwarg}` parameter"):
             assert_node_contract(type("Missing", (BaseNode,), {
                 "type": f"author_missing_{kwarg}", "label": "X", flag: True,
                 "execute": lambda self, image, mask=None: {}}))
@@ -320,19 +321,18 @@ class TestAssertNodeContract:
             assert_node_contract(type("I18nChild", (parent,), {"type": "author_i18n_child"}))
 
     def test_schema_errors_fail_but_warnings_pass_by_default(self):
-        warny = type("Warny", (BaseNode,), {
-            "type": "author_warny", "label": "X",
-            "param_schema": [{"key": "c", "label": "C", "type": "color", "default": "#fff"}],
-            "execute": lambda self, image, mask=None, data=None, context=None: {}})
-        assert_node_contract(warny)                                   # warning tolerated
-        with pytest.raises(AssertionError, match="did you mean 'colour'"):
-            assert_node_contract(warny, allow_schema_warnings=False)  # opt into strictness
+        # Since 1.2.0 an unknown param type is rejected at class creation.
+        with pytest.raises(TypeError, match="colour"):
+            type("Warny", (BaseNode,), {
+                "type": "author_warny", "label": "X",
+                "param_schema": [{"key": "c", "label": "C", "type": "color", "default": "#fff"}],
+                "execute": lambda self, image, mask=None, data=None, context=None: {}})
 
     def test_all_problems_are_reported_at_once(self):
         with pytest.raises(AssertionError) as exc:
             assert_node_contract(type("Messy", (BaseNode,), {
-                "type": "Bare Type", "label": "", "accepts_data": True,
+                "type": "Bare Type", "label": "",
                 "execute": lambda self, image, mask=None: {}}))
         # not namespaced + uppercase-with-space + empty label + accepts_data
         # with no `data` parameter
-        assert str(exc.value).count("  - ") >= 4
+        assert str(exc.value).count("  - ") >= 3

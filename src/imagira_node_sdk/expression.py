@@ -1,19 +1,6 @@
-"""Safe expression evaluator and ``{{ }}`` param templating.
+"""Safe expression evaluator for control flow conditions.
 
-Vendored verbatim from Imagira's ``core/expression.py``. Two distinct jobs
-live here:
-
-1. :class:`ExprParams` — what every node's ``self.params`` actually is. It
-   resolves ``{{ $json.path }}`` templates on read, which is why this module
-   has to ship with the contract rather than stay in the app: a node tested
-   standalone against the SDK must behave exactly as it does inside Imagira.
-2. :func:`evaluate` / :func:`make_env` — the condition evaluator the host
-   app's control-flow nodes (If / If-Else / Switch / While) are built on.
-   Exported for host apps and control-flow node authors; not something a
-   typical image-processing node needs.
-
-The module-level ContextVar below is the reason there must be exactly ONE copy
-of this module in a process — see docs/versioning.md.
+Used by If / If-Else / Switch / While nodes (analysis/51_engine.md).
 
 The grammar covers what users actually want in workflow conditions:
 
@@ -134,11 +121,39 @@ def evaluate(expr: str, variables: dict | None = None) -> object:
 
 
 def _strip_dollars(expr: str) -> str:
-    """Rewrite ``$name`` → ``__v_name__`` so Python's parser accepts it."""
+    """Rewrite ``$name`` → ``__v_name__`` so Python's parser accepts it.
+
+    Skips string literals. This is a character scan over the raw expression
+    text, done before it's ever parsed, so it originally had no idea where a
+    quoted string started or ended — a `$word` an author typed inside one
+    (a literal message like `"cost is $data dollars"`) got rewritten right
+    along with a real `$data` reference, silently corrupting the string's
+    actual content with no error at eval time. Tracking whether we're
+    currently inside a `'...'`/`"..."` literal, and honouring backslash
+    escapes so an escaped quote doesn't end the literal early, leaves quoted
+    text untouched.
+    """
     out: list[str] = []
     i = 0
-    while i < len(expr):
+    n = len(expr)
+    quote: str | None = None   # the quote char of the literal we're inside, or None
+    while i < n:
         c = expr[i]
+        if quote is not None:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(expr[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in ("'", '"'):
+            quote = c
+            out.append(c)
+            i += 1
+            continue
         if c == "$":
             j = i + 1
             while j < len(expr) and (expr[j].isalnum() or expr[j] == "_"):
@@ -167,12 +182,21 @@ def _eval(node, env):
         op = _UNARY_OPS.get(type(node.op))
         if op is None:
             raise ExpressionError(f"unsupported unary op: {type(node.op).__name__}")
-        return op(_eval(node.operand, env))
+        operand = _eval(node.operand, env)
+        try:
+            return op(operand)
+        except TypeError as e:
+            raise ExpressionError(f"can't apply unary operator to {operand!r}: {e}") from e
     if isinstance(node, ast.BinOp):
         op = _BIN_OPS.get(type(node.op))
         if op is None:
             raise ExpressionError(f"unsupported binary op: {type(node.op).__name__}")
-        return op(_eval(node.left, env), _eval(node.right, env))
+        left, right = _eval(node.left, env), _eval(node.right, env)
+        try:
+            return op(left, right)
+        except TypeError as e:
+            raise ExpressionError(
+                f"can't apply operator to {left!r} and {right!r}: {e}") from e
     if isinstance(node, ast.BoolOp):
         values = [_eval(v, env) for v in node.values]
         if isinstance(node.op, ast.And):
@@ -197,7 +221,18 @@ def _eval(node, env):
             if op is None:
                 raise ExpressionError(f"unsupported comparison: {type(op_node).__name__}")
             right = _eval(right_node, env)
-            if not op(left, right):
+            try:
+                result = op(left, right)
+            except TypeError as e:
+                # A raw TypeError (e.g. `$str_value > 5`) must not escape —
+                # every caller of `evaluate`/`resolve_template` only catches
+                # ExpressionError (If Condition routes to its False branch on
+                # exactly that type; `_eval_template_expr` below does too), so
+                # letting this through as TypeError skipped that handling
+                # entirely and crashed instead of degrading gracefully.
+                raise ExpressionError(
+                    f"can't compare {left!r} and {right!r}: {e}") from e
+            if not result:
                 return False
             left = right
         return True
@@ -233,7 +268,7 @@ def _eval(node, env):
 # ── Convenience: pre-built variable env from a node-execution context ────────
 
 def make_env(*, data=None, mask=None, iteration=None, item=None, extras=None) -> dict:
-    """Assemble the standard variable set for control-flow conditions."""
+    """Assemble the standard variable set documented in 18_control_flow_nodes.md."""
     env: dict = {}
     if data is not None:
         env["data"] = data
@@ -274,7 +309,7 @@ def _mask_coverage(mask) -> float:
 #     of the ordering/concurrency hazards real data-flow would: it's known
 #     the moment the graph is defined, before any execution happens, which
 #     is also what makes live-preview-without-a-run possible (see
-#     the host app's expression-preview endpoint).
+#     ``api/expressions.py``'s preview endpoint).
 #
 # Reuses `evaluate` above (already a safe, AST-whitelisted evaluator, no new
 # attack surface) rather than a second bespoke path-parser; `$json` is just
@@ -283,7 +318,7 @@ def _mask_coverage(mask) -> float:
 _TEMPLATE_RE = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
 
 
-def resolve_template(value, data=None, all_nodes=None):
+def resolve_template(value, data=None, all_nodes=None, extras=None):
     """Resolve ``{{ expression }}`` placeholders in *value*.
 
     *data* is bound as ``$json``/``$data`` — the current node's incoming
@@ -317,7 +352,15 @@ def resolve_template(value, data=None, all_nodes=None):
     if not isinstance(value, str) or "{{" not in value:
         return value
 
+    # `extras` carries the run-position variables the control-flow nodes
+    # already documented — `$mask_coverage`, `$iteration`, `$item`. They used
+    # to exist only inside If Condition's and Data Transform's own
+    # `make_env()`, so `{{ $mask_coverage }}` typed into any ORDINARY
+    # parameter raised "unknown variable" — a documented variable that worked
+    # in two nodes and nowhere else.
     variables = {"data": data, "json": data, "nodes": all_nodes or {}}
+    if extras:
+        variables.update(extras)
 
     # "Whole field" means exactly one {{ }} block spanning the ENTIRE trimmed
     # string — checked by finding every non-overlapping placeholder (the same
@@ -349,10 +392,9 @@ def _eval_template_expr(inner: str, variables: dict):
 
 # Per-call "current node context" used by ExprParams below, set by the
 # pipeline engine right before invoking a node's execute() and reset in a
-# `finally` right after (see the host app's pipeline engine). A plain
-# module-level variable
+# `finally` right after (see core/pipeline.py). A plain module-level variable
 # would be unsafe — the engine runs one thread per image and reuses the same
-# node instance across all of them — but
+# node instance across all of them (analysis/28 F11's sharing pattern) — but
 # contextvars.ContextVar is naturally thread-isolated: a new OS thread starts
 # with its own empty Context, so concurrent worker threads setting this
 # never see each other's value, with no lock needed. Holds both `data` (the
@@ -364,13 +406,36 @@ _CURRENT_CTX: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
     "_current_node_ctx", default=None)
 
 
-def set_current_data(data, all_nodes=None):
+def set_current_data(data, all_nodes=None, extras=None):
     """Bind *data* (``$json``/``$data``) and *all_nodes* (``$nodes``) as the
     template source for the duration of the current thread's node.execute()
     call. Returns a token — pass it to :func:`reset_current_data` in a
     ``finally`` block.
     """
-    return _CURRENT_CTX.set({"data": data, "nodes": all_nodes or {}})
+    return _CURRENT_CTX.set({"data": data, "nodes": all_nodes or {},
+                             "extras": extras or {}})
+
+
+def current_extras() -> dict:
+    """The run-position variables bound around the running execute().
+
+    Companion to `current_node_params`, for a node that calls
+    `resolve_template` directly instead of reading through `ExprParams`.
+    """
+    return (_CURRENT_CTX.get() or {}).get("extras") or {}
+
+
+def current_node_params() -> dict:
+    """The `$nodes` mapping bound around the running execute(), or `{}`.
+
+    `ExprParams` reads this implicitly when it resolves a param. A node that
+    calls `resolve_template` DIRECTLY — If Condition resolves each side of
+    each rule separately, because the stored value is a JSON document whose
+    fields contain expressions — has no other way to reach the same binding,
+    and without it `$nodes` would work in every parameter except the one place
+    that builds conditions out of them.
+    """
+    return (_CURRENT_CTX.get() or {}).get("nodes") or {}
 
 
 def reset_current_data(token) -> None:
@@ -392,12 +457,64 @@ class ExprParams(dict):
     own node-authoring convention.
     """
 
+    # Optional ``(key, value) -> value`` applied to the RESOLVED value that
+    # get()/[] return (schema coercion, analysis/54 Part 5 A5). The raw
+    # dict.* paths never see it, so serialisation stays raw.
+    _coerce = None
+
+    # Optional ``(key) -> None`` called before every mutation (A6: strict mode
+    # flags a node writing to its own params while execute() runs). Set by
+    # BaseNode.__init__ after the initial fill; None for a bare ExprParams.
+    _write_guard = None
+
+    def __init__(self, *args, coerce=None, **kwargs):
+        dict.__init__(self, *args, **kwargs)
+        self._coerce = coerce
+
+    def __setitem__(self, key, value):
+        if self._write_guard is not None:
+            self._write_guard(key)
+        dict.__setitem__(self, key, value)
+
+    def __delitem__(self, key):
+        if self._write_guard is not None:
+            self._write_guard(key)
+        dict.__delitem__(self, key)
+
+    def update(self, *args, **kwargs):
+        if self._write_guard is not None:
+            self._write_guard("<update>")
+        dict.update(self, *args, **kwargs)
+
+    def setdefault(self, key, default=None):
+        if self._write_guard is not None and key not in self:
+            self._write_guard(key)
+        return dict.setdefault(self, key, default)
+
+    def pop(self, key, *default):
+        if self._write_guard is not None:
+            self._write_guard(key)
+        return dict.pop(self, key, *default)
+
+    def clear(self):
+        if self._write_guard is not None:
+            self._write_guard("<clear>")
+        dict.clear(self)
+
     def get(self, key, default=None):
         raw = dict.get(self, key, default)
         ctx = _CURRENT_CTX.get() or {}
-        return resolve_template(raw, ctx.get("data"), ctx.get("nodes"))
+        val = resolve_template(raw, ctx.get("data"), ctx.get("nodes"),
+                               ctx.get("extras"))
+        if self._coerce is not None and val is not None:
+            return self._coerce(key, val)
+        return val
 
     def __getitem__(self, key):
         raw = dict.__getitem__(self, key)
         ctx = _CURRENT_CTX.get() or {}
-        return resolve_template(raw, ctx.get("data"), ctx.get("nodes"))
+        val = resolve_template(raw, ctx.get("data"), ctx.get("nodes"),
+                               ctx.get("extras"))
+        if self._coerce is not None and val is not None:
+            return self._coerce(key, val)
+        return val

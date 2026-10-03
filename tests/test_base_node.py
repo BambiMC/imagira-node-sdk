@@ -27,6 +27,9 @@ from imagira_node_sdk.testing import isolated_registry
 def _node(**attrs):
     """Define a throwaway node subclass with *attrs* set on it."""
     attrs.setdefault("type", "t_" + "_".join(sorted(attrs)) or "t")
+    # Full signature, so accepts_* flags pass the flag/signature check (1.2.0).
+    attrs.setdefault("execute", lambda self, image, mask=None, samples=None,
+                     data=None, context=None: {})
     return type("TmpNode", (BaseNode,), attrs)
 
 
@@ -271,7 +274,7 @@ class TestExecuteContract:
 
     def test_base_execute_raises_not_implemented(self):
         with pytest.raises(NotImplementedError):
-            _node(type="e_abstract")("n1").execute(np.zeros((2, 2, 3), np.uint8))
+            type("Abstract", (BaseNode,), {"type": "e_abstract"})("n1").execute(np.zeros((2, 2, 3), np.uint8))
 
     def test_execute_gpu_falls_back_to_execute(self):
         class _Gpu(BaseNode):
