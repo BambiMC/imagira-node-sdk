@@ -65,10 +65,26 @@ def _guarded_pow(base, exp):
     return _op.pow(base, exp)
 
 
+# Sequence repetition is the other allocation bomb (S12 only capped **):
+# `[0]*10**9` or `"a"*10**10` allocates gigabytes in one operator.
+_MAX_SEQ_LEN = 1_000_000
+
+
+def _guarded_mul(a, b):
+    """``operator.mul`` that refuses to build a huge str/list/tuple."""
+    for seq, n in ((a, b), (b, a)):
+        if isinstance(seq, (str, bytes, list, tuple)) and isinstance(n, int):
+            if len(seq) * max(n, 0) > _MAX_SEQ_LEN:
+                raise ExpressionError(
+                    f"repetition too large (> {_MAX_SEQ_LEN} elements) — refused to avoid DoS"
+                )
+    return _op.mul(a, b)
+
+
 _BIN_OPS = {
     ast.Add:      _op.add,
     ast.Sub:      _op.sub,
-    ast.Mult:     _op.mul,
+    ast.Mult:     _guarded_mul,
     ast.Div:      _op.truediv,
     ast.FloorDiv: _op.floordiv,
     ast.Mod:      _op.mod,
@@ -116,8 +132,17 @@ def evaluate(expr: str, variables: dict | None = None) -> object:
         tree = ast.parse(py_expr, mode="eval")
     except SyntaxError as e:
         raise ExpressionError(f"syntax error: {e}") from e
+    except (ValueError, RecursionError, MemoryError) as e:
+        raise ExpressionError(f"cannot parse expression: {e}") from e
     env = {f"__v_{k}__": v for k, v in (variables or {}).items()}
-    return _eval(tree.body, env)
+    try:
+        return _eval(tree.body, env)
+    except ExpressionError:
+        raise
+    except (ArithmeticError, ValueError, TypeError, RecursionError) as e:
+        # Every caller only catches ExpressionError to degrade gracefully; `1/0`,
+        # `int('abc')` or `len(5)` used to escape as raw exceptions.
+        raise ExpressionError(f"{type(e).__name__}: {e}") from e
 
 
 def _strip_dollars(expr: str) -> str:
@@ -198,18 +223,19 @@ def _eval(node, env):
             raise ExpressionError(
                 f"can't apply operator to {left!r} and {right!r}: {e}") from e
     if isinstance(node, ast.BoolOp):
-        values = [_eval(v, env) for v in node.values]
+        # Lazy, like Python: `$x != 0 and 10/$x > 2` must not evaluate the right
+        # operand when the left already decides the result.
         if isinstance(node.op, ast.And):
             result = True
-            for v in values:
-                result = result and v
+            for v in node.values:
+                result = _eval(v, env)
                 if not result:
                     return result
             return result
         if isinstance(node.op, ast.Or):
             result = False
-            for v in values:
-                result = result or v
+            for v in node.values:
+                result = _eval(v, env)
                 if result:
                     return result
             return result

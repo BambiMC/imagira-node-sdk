@@ -797,8 +797,12 @@ class Analyzer(_Kind):
             return self._null({"image": None, "mask": mask, "data": None})
         mask_in = mask if self.accepts_mask else None
         rgb = to_rgb(image)
-        if mask_in is not None and np.any(mask_in):
-            pixels = rgb[as_bool_mask(mask_in), :3]
+        # Gate on the SAME boolean selection that indexes the pixels: a soft mask
+        # whose values are all <= 0.5 passes np.any() but selects nothing, which
+        # produced an empty measurement instead of falling back to the frame.
+        selection = as_bool_mask(mask_in) if mask_in is not None else None
+        if selection is not None and selection.any():
+            pixels = rgb[selection, :3]
         else:
             pixels = rgb[:, :, :3].reshape(-1, 3)
         if len(pixels) == 0 and not self.call_on_empty:

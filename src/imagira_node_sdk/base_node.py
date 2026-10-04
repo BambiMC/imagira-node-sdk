@@ -984,6 +984,14 @@ class UnknownNodeType(BaseNode):
 
 def register(cls):
     """Register a node class in the global NODE_REGISTRY."""
+    previous = NODE_REGISTRY.get(cls.type)
+    if previous is not None and previous is not cls:
+        # Last registration still wins (unchanged), but a plugin silently
+        # replacing a built-in for every saved workflow must be visible.
+        import logging
+        logging.getLogger(__name__).warning(
+            "node type %r re-registered: %s replaces %s",
+            cls.type, getattr(cls, "__qualname__", cls), getattr(previous, "__qualname__", previous))
     NODE_REGISTRY[cls.type] = cls
     return cls
 

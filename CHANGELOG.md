@@ -28,6 +28,20 @@ in the app diffs all four. Nothing was added to `__all__`; use the submodules.
 - **Strict-mode state guard**: `_state_on_self` / `_EXECUTING`; a no-op without
   the app's `core.node_contract`.
 
+### Fixed (expression evaluator, mirrored from the app)
+
+- `evaluate()` raises `ExpressionError` for runtime failures (`1/0`, `int('abc')`,
+  `len(5)`, runaway recursion) instead of leaking `ZeroDivisionError`/`ValueError`/
+  `TypeError`; callers only catch `ExpressionError`.
+- `and` / `or` short-circuit, so `$x != 0 and 10 / $x > 2` is safe.
+- Sequence repetition is capped (`[0]*10**9`, `'a'*10**10` raise `ExpressionError`);
+  only `**` was bounded before.
+- `register()` logs a warning when a different class replaces an already-registered
+  node `type` (last registration still wins; behaviour is unchanged).
+- The `Analyzer` kind gates on the same boolean selection that indexes the pixels, so a
+  soft mask whose values are all <= 0.5 falls back to the whole frame instead of an
+  empty measurement.
+
 ### Compatibility (why this is a minor release)
 
 - A `True` `accepts_samples` / `accepts_data` / `accepts_context` flag whose
